@@ -10,8 +10,9 @@ import {
   IconKey,
   IconSearch,
   IconAlert,
-  IconUpload
+  IconRefresh
 } from './Icons';
+import { autoFindMissingAnswers } from '../utils/answerFinder';
 
 export default function EditorSection({
   exam,
@@ -19,18 +20,28 @@ export default function EditorSection({
   examConfig,
   onUpdateConfig,
   onStartExam,
-  onGoToExport,
-  onAddMoreFiles
+  onGoToExport
 }) {
-  const [filterMode, setFilterMode] = useState('all'); // 'all' | 'missing'
+  const [filterMode, setFilterMode] = useState('all'); // 'all' | 'missing' | 'auto'
   const [searchQuery, setSearchQuery] = useState('');
   const [editingQuestionId, setEditingQuestionId] = useState(null);
   const [showQuickKeyModal, setShowQuickKeyModal] = useState(false);
   const [quickKeyString, setQuickKeyString] = useState('');
+  const [isAutoSolving, setIsAutoSolving] = useState(false);
+  const [solveProgress, setSolveProgress] = useState('');
 
   const questions = exam.questions || [];
   const withAnswerCount = questions.filter(q => q.options.some(o => o.isCorrect)).length;
   const missingCount = questions.length - withAnswerCount;
+
+  // Compute breakdown of answer sources
+  const sourceCounts = {};
+  questions.forEach(q => {
+    const src = q.answerSource || (q.options.some(o => o.isCorrect) ? 'Đã xác định' : null);
+    if (src) {
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+    }
+  });
 
   const handleTitleChange = (newTitle) => {
     onUpdateExam({
@@ -44,6 +55,7 @@ export default function EditorSection({
       if (q.id !== qId) return q;
       return {
         ...q,
+        answerSource: 'Đã chọn thủ công',
         options: q.options.map((o, idx) => ({
           ...o,
           isCorrect: idx === optIndex
@@ -51,6 +63,27 @@ export default function EditorSection({
       };
     });
     onUpdateExam({ ...exam, questions: updated });
+  };
+
+  const handleRunAutoSolver = async (forceAll = false) => {
+    if (isAutoSolving || questions.length === 0) return;
+    setIsAutoSolving(true);
+    setSolveProgress('Đang tìm đáp án...');
+    try {
+      const solved = await autoFindMissingAnswers(questions, {
+        forceAll,
+        onProgress: (done, total) => {
+          setSolveProgress(`Đang giải ${done}/${total} câu...`);
+        }
+      });
+      onUpdateExam({
+        ...exam,
+        questions: solved
+      });
+    } finally {
+      setIsAutoSolving(false);
+      setSolveProgress('');
+    }
   };
 
   const handleQuestionFieldChange = (qId, field, value) => {
@@ -108,6 +141,7 @@ export default function EditorSection({
       id: newId,
       number: questions.length + 1,
       question: 'Nhập nội dung câu hỏi mới tại đây...',
+      answerSource: 'Đã chọn thủ công',
       options: [
         { label: 'A', text: 'Phương án A', isCorrect: true },
         { label: 'B', text: 'Phương án B', isCorrect: false },
@@ -124,7 +158,6 @@ export default function EditorSection({
   const handleApplyQuickKey = () => {
     if (!quickKeyString.trim()) return;
     const keyMap = {};
-    // Support formats: "1A 2B 3C" or "1.A, 2.B" OR pure letters "ABCDABCD"
     const pairRegex = /(?:Câu\s*)?(\d{1,3})\s*[\.\-\:\)]?\s*([A-F])\b/gi;
     let match;
     let foundPairs = false;
@@ -145,6 +178,7 @@ export default function EditorSection({
       if (!target) return q;
       return {
         ...q,
+        answerSource: 'Nhập bảng đáp án',
         options: q.options.map((o, oIdx) => ({
           ...o,
           isCorrect: String.fromCharCode(65 + oIdx) === target
@@ -157,8 +191,23 @@ export default function EditorSection({
     setQuickKeyString('');
   };
 
+  const isAutoSolvedSource = (src = '') =>
+    src.includes('Tự động') ||
+    src.includes('Tri thức') ||
+    src.includes('Tra cứu') ||
+    src.includes('AI') ||
+    src.includes('Suy luận') ||
+    src.includes('Tính toán');
+
+  const autoSolvedQuestionsCount = questions.filter(q =>
+    isAutoSolvedSource(q.answerSource || '')
+  ).length;
+
   const filteredQuestions = questions.filter(q => {
     if (filterMode === 'missing' && q.options.some(o => o.isCorrect)) {
+      return false;
+    }
+    if (filterMode === 'auto' && !isAutoSolvedSource(q.answerSource || '')) {
       return false;
     }
     if (searchQuery.trim()) {
@@ -189,7 +238,7 @@ export default function EditorSection({
           }}
         >
           <div style={{ flex: 1, minWidth: 280 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <span className="badge badge-mono">{questions.length} CÂU HỎI</span>
               {missingCount === 0 ? (
                 <span className="badge badge-green">
@@ -200,7 +249,19 @@ export default function EditorSection({
                   <IconAlert size={12} /> THIẾU {missingCount} ĐÁP ÁN ĐÚNG
                 </span>
               )}
+
+              {/* Display detected answer source breakdown badges */}
+              {Object.entries(sourceCounts).map(([srcName, count]) => (
+                <span
+                  key={srcName}
+                  className={`badge ${isAutoSolvedSource(srcName) ? 'badge-blue' : 'badge-mono'}`}
+                  title="Phương thức nhận diện đáp án"
+                >
+                  {srcName}: {count}
+                </span>
+              ))}
             </div>
+
             <input
               type="text"
               className="input"
@@ -211,16 +272,33 @@ export default function EditorSection({
                 fontSize: 24,
                 fontWeight: 500,
                 padding: '6px 10px',
-                marginBottom: 4
+                marginBottom: 6
               }}
               placeholder="Tên đề thi..."
             />
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
-              Mẹo: Nhấp trực tiếp vào ô chữ cái <kbd>A</kbd> <kbd>B</kbd> <kbd>C</kbd> <kbd>D</kbd> ở từng câu bên dưới để đổi nhanh đáp án đúng.
+              Mẹo: Nhấp trực tiếp vào phương án <kbd>A</kbd> <kbd>B</kbd> <kbd>C</kbd> <kbd>D</kbd> ở bất kỳ câu nào để đổi nhanh đáp án đúng.
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => handleRunAutoSolver(missingCount === 0)}
+              disabled={isAutoSolving || questions.length === 0}
+              title="Tự động giải và tìm đáp án đúng bằng AI / Tri thức"
+            >
+              <IconRefresh size={15} />
+              <span>
+                {isAutoSolving
+                  ? solveProgress
+                  : missingCount > 0
+                  ? `Tự tìm ${missingCount} đáp án thiếu`
+                  : 'Tự động giải lại đáp án'}
+              </span>
+            </button>
+
             <button
               type="button"
               className="btn"
@@ -229,6 +307,7 @@ export default function EditorSection({
               <IconKey size={16} />
               <span>Nhập nhanh bảng đáp án</span>
             </button>
+
             <button
               type="button"
               className="btn"
@@ -237,6 +316,7 @@ export default function EditorSection({
               <IconPrinter size={16} />
               <span>In đề / Xuất file</span>
             </button>
+
             <button
               type="button"
               className="btn btn-primary btn-lg"
@@ -309,13 +389,24 @@ export default function EditorSection({
               >
                 Tất cả ({questions.length})
               </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${filterMode === 'missing' ? 'btn-primary' : ''}`}
-                onClick={() => setFilterMode('missing')}
-              >
-                Chưa có đáp án ({missingCount})
-              </button>
+              {autoSolvedQuestionsCount > 0 && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterMode === 'auto' ? 'btn-primary' : ''}`}
+                  onClick={() => setFilterMode('auto')}
+                >
+                  Tự động giải ({autoSolvedQuestionsCount})
+                </button>
+              )}
+              {missingCount > 0 && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterMode === 'missing' ? 'btn-primary' : ''}`}
+                  onClick={() => setFilterMode('missing')}
+                >
+                  Chưa có đáp án ({missingCount})
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-sm"
@@ -355,6 +446,7 @@ export default function EditorSection({
             {filteredQuestions.map((q) => {
               const isEditing = editingQuestionId === q.id;
               const hasCorrect = q.options.some(o => o.isCorrect);
+              const isAuto = isAutoSolvedSource(q.answerSource || '');
 
               return (
                 <div
@@ -387,9 +479,13 @@ export default function EditorSection({
                       >
                         Câu {q.number}
                       </span>
-                      {!hasCorrect && (
+                      {!hasCorrect ? (
                         <span className="badge badge-yellow">Chưa chọn đáp án đúng</span>
-                      )}
+                      ) : q.answerSource ? (
+                        <span className={`badge ${isAuto ? 'badge-blue' : 'badge-green'}`}>
+                          Nguồn: {q.answerSource}
+                        </span>
+                      ) : null}
                     </div>
 
                     <div style={{ display: 'flex', gap: 6 }}>

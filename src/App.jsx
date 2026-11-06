@@ -9,6 +9,7 @@ import {
   finalizeParsedExam,
   buildActiveExam
 } from './utils/examParser';
+import { autoFindMissingAnswers } from './utils/answerFinder';
 import { SAMPLE_QUESTIONS } from './utils/examExporter';
 
 const STORAGE_KEY = 'autogen_exam_library_v1';
@@ -18,6 +19,7 @@ export default function App() {
   const [currentExam, setCurrentExam] = useState(null);
   const [activeExamInstance, setActiveExamInstance] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [parseProgressText, setParseProgressText] = useState('');
   const [parseError, setParseError] = useState('');
 
   const [examConfig, setExamConfig] = useState({
@@ -72,15 +74,23 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleFilesSelected = async (files) => {
+  const handleFilesSelected = async (files, autoSolve = true) => {
     setIsParsing(true);
     setParseError('');
+    setParseProgressText('Đang đọc cấu trúc file và đối chiếu định dạng đáp án...');
     try {
       let mergedQuestions = [];
       let titleParts = [];
 
       for (const file of files) {
-        const parsed = await parseExamFile(file);
+        const parsed = await parseExamFile(file, {
+          autoSolve,
+          onProgress: (done, total) => {
+            setParseProgressText(
+              `File có ${total} câu chưa đánh dấu đáp án — Đang tự động tìm đáp án đúng (${done}/${total})...`
+            );
+          }
+        });
         titleParts.push(parsed.title);
         mergedQuestions = [...mergedQuestions, ...parsed.questions];
       }
@@ -89,7 +99,6 @@ export default function App() {
         setParseError(
           'Không tìm thấy câu hỏi trắc nghiệm hợp lệ trong file đã chọn. Hãy kiểm tra lại định dạng (Câu 1: ... A. ... B. ... C. ... D. ...) hoặc thử tải File mẫu.'
         );
-        setIsParsing(false);
         return;
       }
 
@@ -101,35 +110,57 @@ export default function App() {
       setParseError(err?.message || 'Không thể đọc file. Vui lòng thử lại.');
     } finally {
       setIsParsing(false);
+      setParseProgressText('');
     }
   };
 
-  const handleParseRawText = (rawText, customTitle) => {
+  const handleParseRawText = async (rawText, customTitle, autoSolve = true) => {
     setParseError('');
-    const parsed = parseStructuredTextExam(rawText, customTitle || 'Đề thi từ văn bản');
-    if (parsed.questions.length === 0) {
-      setParseError(
-        'Không nhận diện được câu hỏi nào từ đoạn văn bản. Hãy đảm bảo có các phương án A. B. C. D.'
-      );
-      return;
+    setIsParsing(true);
+    setParseProgressText('Đang phân tích câu hỏi từ văn bản...');
+    try {
+      let parsed = parseStructuredTextExam(rawText, customTitle || 'Đề thi từ văn bản');
+      if (parsed.questions.length === 0) {
+        setParseError(
+          'Không nhận diện được câu hỏi nào từ đoạn văn bản. Hãy đảm bảo có các phương án A. B. C. D.'
+        );
+        return;
+      }
+
+      if (autoSolve && parsed.stats.missingAnswerCount > 0) {
+        const solvedQuestions = await autoFindMissingAnswers(parsed.questions, {
+          forceAll: false,
+          onProgress: (done, total) => {
+            setParseProgressText(
+              `Đang tự động tìm đáp án đúng cho ${done}/${total} câu chưa có đáp án...`
+            );
+          }
+        });
+        parsed = finalizeParsedExam(parsed.title, solvedQuestions);
+      }
+
+      loadExamIntoWorkspace(parsed, 'edit');
+    } finally {
+      setIsParsing(false);
+      setParseProgressText('');
     }
-    loadExamIntoWorkspace(parsed, 'edit');
   };
 
   const handleLoadSampleExam = () => {
     setParseError('');
     const sampleExam = finalizeParsedExam(
       'Đề thi mẫu: Kiến thức nền tảng Công nghệ thông tin',
-      SAMPLE_QUESTIONS
+      SAMPLE_QUESTIONS.map(q => ({
+        ...q,
+        answerSource: 'Đề mẫu chuẩn'
+      }))
     );
     loadExamIntoWorkspace(sampleExam, 'edit');
   };
 
   const handleUpdateExam = (updatedExam) => {
-    const finalized = {
-      ...updatedExam,
-      createdAt: new Date().toISOString()
-    };
+    const finalized = finalizeParsedExam(updatedExam.title, updatedExam.questions);
+    finalized.id = updatedExam.id;
     setCurrentExam(finalized);
     upsertExamToLibrary(finalized);
   };
@@ -252,6 +283,7 @@ export default function App() {
             }
             onDeleteSavedExam={handleDeleteSavedExam}
             isParsing={isParsing}
+            parseProgressText={parseProgressText}
             parseError={parseError}
           />
         )}

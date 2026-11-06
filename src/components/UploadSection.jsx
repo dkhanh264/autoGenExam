@@ -7,7 +7,7 @@ import {
   IconBook,
   IconTrash,
   IconPlay,
-  IconPlus
+  IconSliders
 } from './Icons';
 import {
   SAMPLE_QUESTIONS,
@@ -15,6 +15,7 @@ import {
   exportToExcel,
   exportToTxt
 } from '../utils/examExporter';
+import { getAiSettings, saveAiSettings } from '../utils/answerFinder';
 
 const SAMPLE_RAW_TEXT = `Câu 1: Giao thức nào sau đây sử dụng cổng mặc định 443 để truyền tải dữ liệu web an toàn?
 A. HTTP
@@ -26,16 +27,15 @@ Lời giải: HTTPS (Hypertext Transfer Protocol Secure) kết hợp HTTP với 
 Câu 2: Trong hệ quản trị cơ sở dữ liệu quan hệ, khóa ngoại (Foreign Key) dùng để làm gì?
 A. Đảm bảo giá trị cột không trùng lặp trong cùng một bảng
 B. Tăng tốc độ truy vấn văn bản toàn cục
-*C. Thiết lập liên kết và đảm bảo toàn vẹn tham chiếu giữa hai bảng
+<u>C. Thiết lập liên kết và đảm bảo toàn vẹn tham chiếu giữa hai bảng</u>
 D. Mã hóa dữ liệu nhạy cảm của người dùng
-Lời giải: Khóa ngoại tham chiếu đến khóa chính của bảng khác nhằm đảm bảo tính toàn vẹn tham chiếu (Referential Integrity).
 
 Câu 3: Đơn vị đo tốc độ xung nhịp của bộ vi xử lý (CPU) thường được tính bằng gì?
-*A. Gigahertz (GHz)
+A. Gigahertz (GHz)
 B. Gigabyte (GB)
 C. Megabit trên giây (Mbps)
 D. Milliampere-giờ (mAh)
-Lời giải: Tần số xung nhịp CPU biểu thị số chu kỳ lệnh mỗi giây và được đo bằng Hertz (MHz, GHz).`;
+(Câu 3 cố tình không đánh dấu đáp án để hệ thống tự động tìm đáp án đúng!)`;
 
 export default function UploadSection({
   onFilesSelected,
@@ -45,6 +45,7 @@ export default function UploadSection({
   onOpenSavedExam,
   onDeleteSavedExam,
   isParsing,
+  parseProgressText,
   parseError
 }) {
   const [inputMode, setInputMode] = useState('file'); // 'file' | 'paste'
@@ -52,7 +53,16 @@ export default function UploadSection({
   const [pasteTitle, setPasteTitle] = useState('Đề kiểm tra nhanh');
   const [pasteText, setPasteText] = useState(SAMPLE_RAW_TEXT);
   const [openGuideIndex, setOpenGuideIndex] = useState(0);
+  const [showAiConfig, setShowAiConfig] = useState(false);
+  const [aiSettings, setAiSettings] = useState(() => getAiSettings());
+
   const fileInputRef = useRef(null);
+
+  const handleUpdateAiSettings = (patch) => {
+    const next = { ...aiSettings, ...patch };
+    setAiSettings(next);
+    saveAiSettings(next);
+  };
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -69,26 +79,42 @@ export default function UploadSection({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      onFilesSelected(Array.from(e.dataTransfer.files));
+      onFilesSelected(Array.from(e.dataTransfer.files), aiSettings.autoSolveOnUpload);
     }
   };
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      onFilesSelected(Array.from(e.target.files));
+      onFilesSelected(Array.from(e.target.files), aiSettings.autoSolveOnUpload);
       e.target.value = '';
     }
   };
 
   const handleDownloadSampleDocx = () => {
     exportToDocx({
-      title: 'Đề thi mẫu Tin học Đại cương',
+      title: 'Đề thi mẫu Tin học Đại cương (Có gạch chân & màu đỏ)',
       examCode: '101',
       duration: 30,
       questions: SAMPLE_QUESTIONS,
       includeAnswerKey: true,
       underlineCorrectInline: true,
-      filename: 'De-mau-Azota-Chuan.docx'
+      filename: 'De-mau-Co-Dap-An-Word.docx'
+    });
+  };
+
+  const handleDownloadNoAnswerDocx = () => {
+    exportToDocx({
+      title: 'Đề thi mẫu CHƯA CÓ ĐÁP ÁN (Test tự động tìm đáp án)',
+      examCode: '102',
+      duration: 30,
+      questions: SAMPLE_QUESTIONS.map(q => ({
+        ...q,
+        explanation: '',
+        options: q.options.map(o => ({ ...o, isCorrect: false }))
+      })),
+      includeAnswerKey: false,
+      underlineCorrectInline: false,
+      filename: 'De-mau-Chua-Co-Dap-An.docx'
     });
   };
 
@@ -114,26 +140,26 @@ export default function UploadSection({
     <div>
       <div className="hero-header">
         <div className="eyebrow-badge">
-          <span>Bóc tách đề tự động kiểu Azota</span>
+          <span>Bóc tách đa định dạng & Tự động tìm đáp án đúng</span>
         </div>
         <h1 className="editorial-title">
-          Tải file đề cương, khởi tạo bài thi trắc nghiệm trong tích tắc.
+          Tải lên bất kỳ file câu hỏi nào — Tự nhận diện mọi kiểu đánh dấu hoặc tự giải đề.
         </h1>
         <p className="editorial-desc">
-          Hỗ trợ đọc trực tiếp từ <strong>Word (.docx)</strong>, <strong>PDF (.pdf)</strong>,{' '}
-          <strong>Excel / CSV (.xlsx, .csv)</strong> và <strong>Văn bản (.txt)</strong>. Tự động nhận diện
-          câu hỏi, các phương án A/B/C/D, đáp án gạch chân, tô màu hoặc bảng đáp án cuối trang.
+          Đọc trực tiếp <strong>Word (.docx)</strong>, <strong>PDF (.pdf)</strong>,{' '}
+          <strong>Excel / CSV (.xlsx, .csv)</strong>, <strong>HTML</strong> và <strong>Text (.txt)</strong>.
+          Tự động đối chiếu <strong>tô màu chữ, tô nền (highlight/shading), gạch chân, in đậm, in nghiêng, dấu *, bảng đáp án</strong> — và tự động tìm đáp án đúng nếu file chưa có đáp án.
         </p>
       </div>
 
       <div className="bento-grid-2">
         {/* Left Column: Upload or Paste */}
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
             <div>
               <h2 className="card-title" style={{ marginBottom: 2 }}>Nguồn dữ liệu câu hỏi</h2>
               <p className="card-subtitle" style={{ marginBottom: 0 }}>
-                Chọn tải file từ máy tính hoặc dán trực tiếp nội dung văn bản
+                Tải lên một hoặc nhiều file đề thi bất kỳ hoặc dán văn bản
               </p>
             </div>
 
@@ -155,6 +181,64 @@ export default function UploadSection({
                 <span>Dán văn bản</span>
               </button>
             </div>
+          </div>
+
+          {/* Auto-Solve Bar & Optional AI Key Configuration */}
+          <div
+            style={{
+              padding: '12px 16px',
+              background: 'var(--bg-canvas)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 8,
+              marginBottom: 18
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <input
+                  type="checkbox"
+                  checked={aiSettings.autoSolveOnUpload}
+                  onChange={(e) => handleUpdateAiSettings({ autoSolveOnUpload: e.target.checked })}
+                />
+                <span>Tự động tìm đáp án đúng nếu câu hỏi trong file chưa có đáp án</span>
+              </label>
+
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setShowAiConfig(!showAiConfig)}
+              >
+                <IconSliders size={14} />
+                <span>{aiSettings.apiKey ? 'Đã kết nối AI Key' : 'Cấu hình AI nâng cao'}</span>
+              </button>
+            </div>
+
+            {showAiConfig && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-color)', display: 'grid', gap: 10 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                  Mặc định hệ thống tự động giải đề bằng <strong>Tri thức tích hợp + Tra cứu Wikipedia trực tuyến + Phân tích toán/logic</strong> (không cần khóa API). Nếu muốn giải chuyên sâu bằng AI LLM, bạn có thể nhập <strong>Gemini API Key</strong> hoặc <strong>OpenAI API Key</strong>:
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <select
+                    className="select"
+                    style={{ width: 170 }}
+                    value={aiSettings.provider}
+                    onChange={(e) => handleUpdateAiSettings({ provider: e.target.value })}
+                  >
+                    <option value="gemini">Google Gemini API</option>
+                    <option value="openai">OpenAI API</option>
+                  </select>
+                  <input
+                    type="password"
+                    className="input"
+                    style={{ flex: 1, minWidth: 220, fontFamily: 'var(--font-mono)', fontSize: 13 }}
+                    placeholder="Dán API Key (AIza... hoặc sk-...) — Lưu cục bộ trên trình duyệt"
+                    value={aiSettings.apiKey}
+                    onChange={(e) => handleUpdateAiSettings({ apiKey: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {parseError && (
@@ -187,7 +271,7 @@ export default function UploadSection({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".docx,.pdf,.xlsx,.xls,.csv,.txt,.md,.json"
+                  accept=".docx,.pdf,.xlsx,.xls,.csv,.tsv,.txt,.md,.html,.htm,.json"
                   style={{ display: 'none' }}
                   onChange={handleFileChange}
                 />
@@ -195,16 +279,18 @@ export default function UploadSection({
                   <IconUpload size={22} />
                 </div>
                 <p style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                  {isParsing ? 'Đang phân tích và bóc tách câu hỏi...' : 'Kéo thả file đề thi vào đây, hoặc nhấp để chọn file'}
+                  {isParsing
+                    ? (parseProgressText || 'Đang phân tích cấu trúc file và xác định đáp án...')
+                    : 'Kéo thả file câu hỏi vào đây, hoặc nhấp để chọn file'}
                 </p>
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 18 }}>
-                  Chấp nhận nhiều file cùng lúc để gộp thành một ngân hàng đề thi
+                  Hỗ trợ mọi kiểu đánh dấu đáp án (tô màu chữ, tô nền, gạch chân, in đậm, bảng đáp án) hoặc file trắng chưa có đáp án
                 </p>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <span className="badge badge-blue">Word .DOCX</span>
                   <span className="badge badge-red">PDF .PDF</span>
                   <span className="badge badge-green">Excel .XLSX / .CSV</span>
-                  <span className="badge badge-mono">Text .TXT / .JSON</span>
+                  <span className="badge badge-mono">HTML / .TXT / .JSON</span>
                 </div>
               </div>
 
@@ -223,10 +309,10 @@ export default function UploadSection({
               >
                 <div>
                   <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Chưa có sẵn file trên máy?
+                    Bộ đề mẫu kiểm thử nhanh
                   </div>
                   <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
-                    Dùng thử ngay bộ đề mẫu hoặc tải file mẫu chuẩn về máy để kiểm thử
+                    Tải về file mẫu có đáp án (tô màu/gạch chân) hoặc file mẫu <strong>chưa có đáp án</strong> để thử tính năng tự giải đề
                   </div>
                 </div>
 
@@ -237,22 +323,30 @@ export default function UploadSection({
                     onClick={onLoadSampleExam}
                   >
                     <IconPlay size={14} />
-                    <span>Dùng thử đề mẫu ngay (10 câu)</span>
+                    <span>Dùng thử đề mẫu ngay</span>
                   </button>
                   <button
                     type="button"
                     className="btn btn-sm"
                     onClick={handleDownloadSampleDocx}
-                    title="Tải file Word mẫu có gạch chân đáp án và bảng đáp án"
+                    title="Tải file Word mẫu có gạch chân & tô màu đỏ đáp án"
                   >
                     <IconDownload size={14} />
-                    <span>Mẫu .DOCX</span>
+                    <span>Word Có đáp án (.DOCX)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={handleDownloadNoAnswerDocx}
+                    title="Tải file Word mẫu KHÔNG có đáp án để thử tính năng tự động tìm đáp án đúng"
+                  >
+                    <IconDownload size={14} />
+                    <span>Word Chưa có đáp án (.DOCX)</span>
                   </button>
                   <button
                     type="button"
                     className="btn btn-sm"
                     onClick={handleDownloadSampleXlsx}
-                    title="Tải file Excel mẫu"
                   >
                     <IconDownload size={14} />
                     <span>Mẫu .XLSX</span>
@@ -261,7 +355,6 @@ export default function UploadSection({
                     type="button"
                     className="btn btn-sm"
                     onClick={handleDownloadSampleTxt}
-                    title="Tải file Text mẫu"
                   >
                     <IconDownload size={14} />
                     <span>Mẫu .TXT</span>
@@ -283,14 +376,14 @@ export default function UploadSection({
               </div>
               <div style={{ marginBottom: 16 }}>
                 <label className="field-label">
-                  Nội dung câu hỏi (Đặt dấu * trước đáp án đúng hoặc thêm BẢNG ĐÁP ÁN ở cuối)
+                  Nội dung câu hỏi (Có thể đánh dấu *, <u>gạch chân</u>, **in đậm**, hoặc để trống đáp án để hệ thống tự giải)
                 </label>
                 <textarea
                   className="textarea"
                   rows={11}
                   value={pasteText}
                   onChange={(e) => setPasteText(e.target.value)}
-                  placeholder="Câu 1: Nội dung câu hỏi?&#10;*A. Đáp án đúng&#10;B. Đáp án sai..."
+                  placeholder="Câu 1: Nội dung câu hỏi?&#10;A. Phương án 1&#10;B. Phương án 2..."
                   style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}
                 />
               </div>
@@ -305,11 +398,11 @@ export default function UploadSection({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={() => onParseRawText(pasteText, pasteTitle)}
-                  disabled={!pasteText.trim()}
+                  onClick={() => onParseRawText(pasteText, pasteTitle, aiSettings.autoSolveOnUpload)}
+                  disabled={!pasteText.trim() || isParsing}
                 >
                   <IconCheck size={16} />
-                  <span>Tách câu hỏi & Tạo đề</span>
+                  <span>{isParsing ? 'Đang xử lý & tìm đáp án...' : 'Tách câu hỏi & Tạo đề'}</span>
                 </button>
               </div>
             </div>
@@ -382,11 +475,11 @@ export default function UploadSection({
           )}
         </div>
 
-        {/* Right Column: Formatting Rules & Azota Compatibility Guide */}
+        {/* Right Column: Universal Detection Capabilities */}
         <div className="card">
-          <h2 className="card-title">Quy chuẩn nhận diện thông minh</h2>
+          <h2 className="card-title">Cơ chế nhận diện đa tầng</h2>
           <p className="card-subtitle">
-            Hệ thống tương thích hoàn toàn với cách trình bày đề thi phổ thông và đại học tại Việt Nam
+            Phân tích vi sai định dạng (Relative Style Differential) giúp đọc chính xác mọi kiểu đánh dấu
           </p>
 
           <div style={{ borderTop: '1px solid var(--border-color)' }}>
@@ -410,7 +503,7 @@ export default function UploadSection({
                   fontSize: 14
                 }}
               >
-                <span>1. Định dạng file Word (.docx) & Văn bản (.txt)</span>
+                <span>1. Nhận diện mọi kiểu đánh dấu trong Word, Excel, PDF</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }}>
                   {openGuideIndex === 0 ? '−' : '+'}
                 </span>
@@ -418,39 +511,25 @@ export default function UploadSection({
               {openGuideIndex === 0 && (
                 <div style={{ paddingBottom: 16, fontSize: 13, color: 'var(--text-body)' }}>
                   <p style={{ marginBottom: 8 }}>
-                    Mỗi câu bắt đầu bằng <kbd>Câu 1:</kbd>, <kbd>Câu 1.</kbd>, <kbd>1.</kbd> hoặc <kbd>Question 1:</kbd>.
-                    Đáp án đúng được tự động nhận diện qua <strong>1 trong 4 cách</strong>:
+                    Trong mỗi câu hỏi, hệ thống tự động so sánh đối chiếu 4 phương án <kbd>A</kbd> <kbd>B</kbd> <kbd>C</kbd> <kbd>D</kbd> để phát hiện phương án nổi bật theo thứ tự ưu tiên:
                   </p>
-                  <ul style={{ paddingLeft: 18, marginBottom: 10, display: 'grid', gap: 4 }}>
+                  <ul style={{ paddingLeft: 18, display: 'grid', gap: 5 }}>
                     <li>
-                      <strong>Gạch chân</strong> (<u>A.</u>), <strong>Tô màu chữ đỏ/xanh</strong> hoặc <strong>Tô sáng (Highlight)</strong> phương án đúng trong Word.
+                      <strong>Tô nền / Highlight / Shading:</strong> Tô sáng chữ hoặc đổ màu nền ô bảng trong Word & Excel.
                     </li>
                     <li>
-                      Đặt dấu sao trước phương án đúng: <kbd>*A.</kbd> hoặc <kbd>*B.</kbd>
+                      <strong>Gạch chân (Underline):</strong> Gạch chân chữ cái đầu (<u>A.</u>) hoặc gạch chân toàn bộ phương án đúng.
                     </li>
                     <li>
-                      Ghi dòng <kbd>Đáp án: B</kbd> và <kbd>Lời giải: ...</kbd> ngay dưới câu hỏi.
+                      <strong>Tô màu chữ (Text Color):</strong> Chữ màu đỏ, xanh, cam... khác biệt với 3 phương án còn lại.
                     </li>
                     <li>
-                      Đặt mục <strong>BẢNG ĐÁP ÁN</strong> ở cuối đề (<kbd>1.A 2.B 3.C 4.D...</kbd>).
+                      <strong>In đậm / In nghiêng vi sai:</strong> Chỉ in đậm phương án đúng (hoặc chỉ in đậm chữ cái đầu của phương án đúng).
+                    </li>
+                    <li>
+                      <strong>Ký hiệu & Bảng đáp án:</strong> Dấu <kbd>*A.</kbd>, <kbd>[x]</kbd>, <kbd>(Đúng)</kbd>, dòng <kbd>Đáp án: A</kbd> hoặc <strong>Bảng đáp án</strong> ở cuối file.
                     </li>
                   </ul>
-                  <div
-                    style={{
-                      background: 'var(--bg-canvas)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 6,
-                      padding: 10,
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 11.5,
-                      lineHeight: 1.5
-                    }}
-                  >
-                    Câu 1: Thủ đô của Việt Nam là thành phố nào?<br />
-                    *A. Hà Nội &nbsp;&nbsp;&nbsp; B. Huế<br />
-                    C. Đà Nẵng &nbsp;&nbsp;&nbsp; D. TP. Hồ Chí Minh<br />
-                    Lời giải: Hà Nội là thủ đô của nước CHXHCN Việt Nam.
-                  </div>
                 </div>
               )}
             </div>
@@ -475,7 +554,7 @@ export default function UploadSection({
                   fontSize: 14
                 }}
               >
-                <span>2. Định dạng bảng tính Excel (.xlsx, .csv)</span>
+                <span>2. Tự động tìm đáp án đúng khi file không có đáp án</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }}>
                   {openGuideIndex === 1 ? '−' : '+'}
                 </span>
@@ -483,23 +562,19 @@ export default function UploadSection({
               {openGuideIndex === 1 && (
                 <div style={{ paddingBottom: 16, fontSize: 13, color: 'var(--text-body)' }}>
                   <p style={{ marginBottom: 8 }}>
-                    Hỗ trợ bảng tính có dòng tiêu đề hoặc không có tiêu đề theo thứ tự cột:
+                    Khi tải lên một đề thi trắng (chưa đánh dấu đáp án), hệ thống kích hoạt chuỗi <strong>Auto-Solver 3 tầng</strong>:
                   </p>
-                  <div
-                    style={{
-                      background: 'var(--bg-canvas)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: 6,
-                      padding: 10,
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 11.5
-                    }}
-                  >
-                    | Câu hỏi | Đáp án A | Đáp án B | Đáp án C | Đáp án D | Đáp án đúng | Giải thích |
-                  </div>
-                  <p style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: 12.5 }}>
-                    Cột <strong>Đáp án đúng</strong> có thể điền chữ cái (<kbd>A</kbd>, <kbd>B</kbd>, <kbd>C</kbd>, <kbd>D</kbd>), số thứ tự (<kbd>1</kbd>-<kbd>4</kbd>) hoặc nội dung phương án đúng.
-                  </p>
+                  <ul style={{ paddingLeft: 18, display: 'grid', gap: 5 }}>
+                    <li>
+                      <strong>Tầng 1 (AI Giải đề):</strong> Sử dụng Gemini / OpenAI API (nếu được cấu hình) để giải chính xác kèm lời giải chi tiết.
+                    </li>
+                    <li>
+                      <strong>Tầng 2 (Tra cứu Tri thức Wikipedia trực tuyến):</strong> Tự động truy vấn đối chiếu dữ kiện câu hỏi trên Wikipedia tiếng Việt & tiếng Anh.
+                    </li>
+                    <li>
+                      <strong>Tầng 3 (Bộ giải Toán/Logic & Tri thức tích hợp):</strong> Tính toán biểu thức số học, cơ số và đối chiếu ngân hàng quy tắc học thuật.
+                    </li>
+                  </ul>
                 </div>
               )}
             </div>
@@ -524,7 +599,7 @@ export default function UploadSection({
                   fontSize: 14
                 }}
               >
-                <span>3. File PDF (.pdf) & Chọn đáp án bổ sung</span>
+                <span>3. Hỗ trợ danh sách tự động (Auto-Numbering) & Bảng biểu</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16 }}>
                   {openGuideIndex === 2 ? '−' : '+'}
                 </span>
@@ -532,7 +607,7 @@ export default function UploadSection({
               {openGuideIndex === 2 && (
                 <div style={{ paddingBottom: 16, fontSize: 13, color: 'var(--text-body)' }}>
                   <p>
-                    Với các file PDF hoặc Word chưa được đánh dấu sẵn đáp án đúng, hệ thống vẫn tự động tách toàn bộ câu hỏi và phương án A/B/C/D. Sau đó bạn có thể <strong>nhấp chuột chọn đáp án đúng cho từng câu</strong> hoặc <strong>dán nhanh chuỗi đáp án (1A 2B 3C...)</strong> ngay trên giao diện chỉnh sửa.
+                    Đọc được cả các file Word dùng <strong>Numbering / Bullet tự động</strong> của Microsoft Word (<kbd>1, 2, 3</kbd> hoặc <kbd>A, B, C, D</kbd> tự động), câu hỏi nằm trong bảng biểu (<kbd>Table</kbd>) và file Excel tô màu ô đáp án mà không cần cột Đáp án riêng.
                   </p>
                 </div>
               )}
